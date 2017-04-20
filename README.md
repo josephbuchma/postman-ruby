@@ -19,7 +19,7 @@ p = Postman.parse_file('exported_requests_collection.json')
 p.set_env('host' => 'http://localhost:9090', 'access_token' => 'x5CACj1cmrRLtt7EgIBxblYrfcrJVbQL820QJ1kNY')
 
 # Filter by hash
-filtered = p.filter('method' => 'get', 'name'=>/.*(search|find).*/)
+filtered = p.filter('method' => 'get', 'name'=>/.*(search|find).*/i)
 
 # Filter with block
 filtered = p.filter do |r|
@@ -28,7 +28,7 @@ end
 
 # Make some requests
 filtered.each do |r|
-  resp = r.call # => Net:HTTPResponse
+  resp = r.execute # => RestClient::Response
 
   # ...
 end

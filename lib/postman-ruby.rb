@@ -1,5 +1,7 @@
 require 'json'
 require 'net/http'
+require 'rest-client'
+require 'delegate'
 
 module Postman
   class URL
@@ -8,6 +10,7 @@ module Postman
       # @auth
       # @host
       # @path
+      # @query
       # @variable
       if url.class == String
         url = {
@@ -33,6 +36,14 @@ module Postman
       end
     end
 
+    def set_var(vars)
+      vars.each { |k, v| @variable[k] = v }
+    end
+
+    def reset_var(vars)
+      @variable = vars
+    end
+
     def to_s
       interpolate
     end
@@ -41,9 +52,9 @@ module Postman
 
     def interpolate
       url = @raw
-      vars = @raw.scan(/:[A-Za-z\-_]+\//)
+      vars = @raw.scan(/:([A-Za-z\-_]+)(?:\/|$)/).flatten
       vars.each do |v|
-        url = url.gsub(v, @variable[v[1..-1]])
+        url = url.gsub(':'+v, @variable[v])
       end
       url
     end
@@ -62,8 +73,18 @@ module Postman
         instance_variable_set("@#{k}", v)
         self.class.send(:attr_reader, k.to_sym)
       end
+      @method = @method.downcase.to_sym
       @url = URL.new(@url)
       @env = @environment
+      if @header.nil?
+        @header = {}
+      else
+        header = {}
+        @header.each do |h|
+          header[h['key']] = apply_env(h['value'])
+        end
+        @header = header
+      end
     end
 
     def set_env(env)
@@ -74,34 +95,61 @@ module Postman
       @env = env.clone
     end
 
-    def call
-      send @method.downcase.to_sym
+    def execute
+      if @method == :get
+        new_request(:get).execute
+      else
+        params = {}
+
+        unless @body.nil? && @body.empty?
+          if @body['mode'] == 'raw'
+            params[:payload] = @body['raw']
+          elsif @body['mode'] == 'formdata'
+            f = {}
+            @body['formdata'].each do |d|
+              if d['enabled']
+                if d['type'] == 'file'
+                  params[:multipart] = true
+                end
+                f[d['key']] = d['value'] || ""
+              end
+            end
+            params[:payload] = f
+          end
+        end
+        new_request(:post, params).execute
+      end
     end
 
     private
 
     def apply_env(str)
-      vars = str.scan(/\{{2}[A-Za-z_\-.]+\}{2}/)
-      vars.each do |v|
-        val = @env[v[2..-3]]
-        raise "Request env var is missing: #{v}" if val.nil?
-        str = str.gsub(v, val)
+      if !@env.nil?
+        vars = str.scan(/\{{2}[A-Za-z_\-.]+\}{2}/)
+        vars.each do |v|
+          val = @env[v[2..-3]]
+          raise "Request env var is missing: #{v}" if val.nil?
+          str = str.gsub(v, val)
+        end
       end
       str
     end
 
-    def get
-      uri = URI(apply_env(@url.to_s))
-      req = Net::HTTP::Get.new(uri)
-      if @header.class == Array
-        @header.each do |h|
-          req[h['key']] = apply_env(h['value'])
-        end
-      end
-      Net::HTTP.start(uri.host, uri.port) do |http|
-        return http.request req # Net::HTTPResponse object
+    class RequestDecorator < SimpleDelegator
+      def execute
+        __getobj__.execute {|response, request, result| response }
       end
     end
+
+
+    def new_request(method, params={})
+      params[:method] = method
+      params[:url] = apply_env(@url.to_s)
+      params[:headers] = @header
+      r = RestClient::Request.new(params)
+      RequestDecorator.new(r)
+    end
+
   end
 
   FILTER_KEYS=%w(name url method description)
@@ -165,6 +213,9 @@ module Postman
           score = 0
           flt_hash.each do |k, v|
             itk = req[k.to_s]
+            if k.to_s == 'url' && itk.class == Hash
+              itk = itk['raw']
+            end
             if !itk.nil?
               score+=1 if v.class == Regexp && v =~ itk || v.class == String && v.downcase == itk.downcase
             end
