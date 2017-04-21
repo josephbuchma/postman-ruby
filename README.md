@@ -2,6 +2,12 @@
 
 Play with [Postman's](https://www.getpostman.com/) request collections using Ruby.
 
+## Install
+
+```
+gem install postman-ruby
+```
+
 ## Usage
 
 1. Export collection from Postman to JSON file (Collection V2)
